@@ -59,6 +59,22 @@ Open `http://127.0.0.1:8000`.
 - `POST /api/simulate`: run simulated trade burst (`decision_id`, `rounds`)
 - `POST /api/reset`: reset baseline scenario
 
+## Vercel Deployment
+This repo is configured for Vercel with:
+- static frontend from `frontend/`
+- serverless Python API at `api/index.py`
+
+Files:
+- [vercel.json](c:\Users\Ryan\OneDrive\Desktop\Y4S2\Financial innovation\Project\vercel.json)
+- [requirements.txt](c:\Users\Ryan\OneDrive\Desktop\Y4S2\Financial innovation\Project\requirements.txt)
+
+Deploy:
+```powershell
+cd "c:\Users\Ryan\OneDrive\Desktop\Y4S2\Financial innovation\Project"
+vercel
+vercel --prod
+```
+
 ## Decision model notes
 - Forecast layer: each decision has linked branch probabilities `P(branch_i)` with `sum_i P(branch_i) = 1`.
 - Value layer: `EV = p * net_success + (1 - p) * net_failure`.
