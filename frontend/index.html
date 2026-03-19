@@ -1,0 +1,262 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Decision Market Control Room</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="kicker">Internal Prediction Markets</p>
+        <h1>M&A Decision Market Simulator</h1>
+      </div>
+      <div class="header-actions">
+        <button id="resetBtn" class="btn ghost">Reset Demo</button>
+      </div>
+    </header>
+
+    <section class="menu-bar panel">
+      <nav class="menu-tabs" aria-label="Primary">
+        <button class="tab-btn active" data-tab="overview" type="button">Simulator</button>
+        <button class="tab-btn" data-tab="trading" type="button">Trading</button>
+        <button class="tab-btn" data-tab="incentives" type="button">Incentives</button>
+        <button class="tab-btn" data-tab="leadership" type="button">Leadership</button>
+        <button class="tab-btn" data-tab="math" type="button">Trade Math</button>
+      </nav>
+      <label class="menu-select-wrap">Menu
+        <select id="menuSelect">
+          <option value="overview">Overview</option>
+          <option value="trading">Trading</option>
+          <option value="incentives">Incentives</option>
+          <option value="leadership">Leadership</option>
+          <option value="math">Trade Math</option>
+        </select>
+      </label>
+    </section>
+
+    <div id="tab-overview" class="tab-panel active">
+      <section class="panel">
+        <h2>Simulator Controls</h2>
+        <form id="simControlForm" class="inline-form">
+          <label>Decision
+            <select id="simDecision" required></select>
+          </label>
+          <label>Set Remaining (sec)
+            <input id="simRemainingSeconds" type="number" min="0" step="1" value="300" />
+          </label>
+          <button id="setWindowBtn" class="btn ghost" type="button">Set Timer</button>
+          <label>Trade Burst (rounds)
+            <input id="simRounds" type="number" min="1" step="1" value="12" />
+          </label>
+          <button id="simulateBtn" class="btn" type="button">Simulate Burst</button>
+        </form>
+        <p class="subtle">Use this to quickly demonstrate TWAP shifts and window-close behavior.</p>
+      </section>
+
+      <section class="grid three">
+        <article class="panel metric-card">
+          <span class="label">Decisions Tracked</span>
+          <strong id="decisionCount">-</strong>
+        </article>
+        <article class="panel metric-card">
+          <span class="label">Recommended</span>
+          <strong id="recommendedCount">-</strong>
+        </article>
+        <article class="panel metric-card">
+          <span class="label">Portfolio EV</span>
+          <strong id="portfolioEv">-</strong>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Decision Intelligence</h2>
+        <div id="decisions" class="decisions"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Linked Branch Markets</h2>
+        <div id="markets" class="markets"></div>
+      </section>
+    </div>
+
+    <div id="tab-trading" class="tab-panel">
+      <section class="grid two">
+        <article class="panel">
+          <h2>Place Trade</h2>
+          <form id="tradeForm" class="form-grid">
+            <label>Decision
+              <select id="tradeDecision" required></select>
+            </label>
+            <label>Branch
+              <select id="tradeOption" required></select>
+            </label>
+            <label>Trader
+              <select id="tradeTrader" required></select>
+            </label>
+            <label>Side
+              <select id="tradeSide" required>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL (Short)</option>
+              </select>
+            </label>
+            <label>Shares
+              <input id="tradeShares" type="number" min="0.1" step="0.1" value="12" required />
+            </label>
+            <button class="btn" type="submit">Buy Branch Shares</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>Resolve Decision</h2>
+          <form id="resolveForm" class="form-grid">
+            <label>Decision
+              <select id="resolveDecision" required></select>
+            </label>
+            <label>Winning Branch
+              <select id="resolveOption" required></select>
+            </label>
+            <button class="btn danger" type="submit">Resolve Decision</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>Trader Balances</h2>
+          <div id="accounts" class="chips"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Recent Trades</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Trader</th>
+                  <th>Decision</th>
+                  <th>Branch</th>
+                  <th>Side</th>
+                  <th>Shares</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
+              <tbody id="tradesBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </div>
+
+    <div id="tab-incentives" class="tab-panel">
+      <section class="panel">
+        <h2>Trader Incentives</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Trader</th>
+                <th>Funded</th>
+                <th>Spent</th>
+                <th>Realized Payout</th>
+                <th>Expected Open Payout</th>
+                <th>Projected Balance</th>
+                <th>Projected PnL</th>
+              </tr>
+            </thead>
+            <tbody id="incentivesBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="tab-leadership" class="tab-panel">
+      <section class="grid two">
+        <article class="panel">
+          <h2>Leadership: Add Decision</h2>
+          <form id="createDecisionForm" class="form-grid">
+            <label>Decision ID
+              <input id="newDecisionId" type="text" placeholder="e.g. LATAM_ENTRY_2027" required />
+            </label>
+            <label>Title
+              <input id="newDecisionTitle" type="text" placeholder="e.g. LATAM Expansion Strategy" required />
+            </label>
+            <label>Description
+              <input id="newDecisionDescription" type="text" placeholder="Single-choice strategic decision." />
+            </label>
+            <label>Use Case
+              <input id="newDecisionUseCase" type="text" placeholder="e.g. M&A, Pricing, Product Launch" value="Custom" />
+            </label>
+            <label>Liquidity b
+              <input id="newDecisionLiquidity" type="number" step="1" value="120" required />
+            </label>
+            <label>Fee (bps)
+              <input id="newDecisionFeeBps" type="number" step="1" value="25" required />
+            </label>
+            <label>Options JSON
+              <textarea id="newDecisionOptions" rows="8" required>[
+  {"option_id":"OPT_A","label":"Option A","success_value":100000000,"failure_value":-40000000,"implementation_cost":12000000,"risk_penalty":5000000},
+  {"option_id":"OPT_B","label":"Option B","success_value":85000000,"failure_value":-25000000,"implementation_cost":7000000,"risk_penalty":3000000}
+]</textarea>
+            </label>
+            <button class="btn" type="submit">Create Decision</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>Leadership: Fund Trader</h2>
+          <form id="fundTraderForm" class="form-grid">
+            <label>Trader ID
+              <input id="fundTraderId" type="text" placeholder="e.g. new_analyst" required />
+            </label>
+            <label>Tokens
+              <input id="fundTraderTokens" type="number" step="1" value="500" required />
+            </label>
+            <button class="btn" type="submit">Fund Trader</button>
+          </form>
+          <p class="subtle">Onboard participants and seed token balances for new teams.</p>
+        </article>
+      </section>
+    </div>
+
+    <div id="tab-math" class="tab-panel">
+      <section class="panel">
+        <h2>How Cost Is Calculated</h2>
+        <p class="subtle">
+          LMSR uses: <code>C(q) = b * ln(sum(exp(q_i / b)))</code>. For each trade: <code>gross_cost = C_after - C_before</code>,
+          <code>fee = gross_cost * fee_bps / 10,000</code>, and probabilities are derived from branch softmax weights.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Per-Trade Probability Impact</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Trader</th>
+                <th>Decision</th>
+                <th>Branch</th>
+                <th>Side</th>
+                <th>Shares</th>
+                <th>C_before</th>
+                <th>C_after</th>
+                <th>Delta C</th>
+                <th>Fee</th>
+                <th>Probabilities (Before -> After)</th>
+              </tr>
+            </thead>
+            <tbody id="mathBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <p id="status" class="status"></p>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
