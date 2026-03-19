@@ -1,16 +1,34 @@
 ﻿from __future__ import annotations
 
-from typing import Any, Dict, List
+import json
+import os
+import time
+import uuid
+from contextlib import contextmanager
 from threading import Lock
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from protocol import PredictionProtocol
 
+try:
+    from redis import Redis
+except Exception:  # pragma: no cover
+    Redis = None
 
-app = FastAPI(title="Decision Market API", version="1.0.0")
-LOCK = Lock()
+
+app = FastAPI(title="Decision Market API", version="1.1.0")
+LOCAL_LOCK = Lock()
+LOCAL_PROTO: PredictionProtocol | None = None
+
+REDIS_URL = os.getenv("REDIS_URL") or os.getenv("KV_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
+USE_REDIS = bool(REDIS_URL and Redis is not None and str(REDIS_URL).startswith("redis"))
+REDIS = Redis.from_url(REDIS_URL, decode_responses=True) if USE_REDIS else None
+STATE_KEY = "pm:state:v2"
+LOCK_KEY = "pm:lock:v2"
 
 
 def build_protocol() -> PredictionProtocol:
@@ -169,19 +187,70 @@ def build_protocol() -> PredictionProtocol:
     return proto
 
 
-PROTO = build_protocol()
+def _load_proto() -> PredictionProtocol:
+    global LOCAL_PROTO
+    if REDIS is None:
+        if LOCAL_PROTO is None:
+            LOCAL_PROTO = build_protocol()
+        return LOCAL_PROTO
+
+    raw = REDIS.get(STATE_KEY)
+    if raw:
+        return PredictionProtocol.from_dict(json.loads(raw))
+
+    proto = build_protocol()
+    REDIS.set(STATE_KEY, json.dumps(proto.to_dict()))
+    return proto
 
 
-def protocol_state() -> Dict[str, Any]:
-    PROTO.auto_close_expired_decisions()
-    decisions = PROTO.all_decision_snapshots()
-    linked_markets = PROTO.linked_market_snapshot()
+def _save_proto(proto: PredictionProtocol) -> None:
+    global LOCAL_PROTO
+    if REDIS is None:
+        LOCAL_PROTO = proto
+        return
+    REDIS.set(STATE_KEY, json.dumps(proto.to_dict()))
+
+
+@contextmanager
+def _mutation_lock(timeout_s: float = 10.0):
+    if REDIS is None:
+        with LOCAL_LOCK:
+            yield
+        return
+
+    token = str(uuid.uuid4())
+    deadline = time.time() + timeout_s
+    acquired = False
+    while time.time() < deadline:
+        if REDIS.set(LOCK_KEY, token, nx=True, ex=15):
+            acquired = True
+            break
+        time.sleep(0.05)
+
+    if not acquired:
+        raise RuntimeError("Failed to acquire state lock")
+
+    try:
+        yield
+    finally:
+        release_script = """
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+            return redis.call('DEL', KEYS[1])
+        else
+            return 0
+        end
+        """
+        REDIS.eval(release_script, 1, LOCK_KEY, token)
+
+
+def _state_response(proto: PredictionProtocol) -> Dict[str, Any]:
+    proto.auto_close_expired_decisions()
     return {
-        "decisions": decisions,
-        "markets": linked_markets,
-        "accounts": PROTO.account_snapshot(),
-        "trader_metrics": PROTO.trader_incentive_snapshot(),
-        "summary": PROTO.enterprise_decision_summary(),
+        "decisions": proto.all_decision_snapshots(),
+        "markets": proto.linked_market_snapshot(),
+        "accounts": proto.account_snapshot(),
+        "trader_metrics": proto.trader_incentive_snapshot(),
+        "summary": proto.enterprise_decision_summary(),
         "trades": [
             {
                 "decision_id": t.decision_id,
@@ -197,9 +266,20 @@ def protocol_state() -> Dict[str, Any]:
                 "after_probabilities": {k: round(v, 6) for k, v in t.after_probabilities.items()},
                 "ts": round(t.ts, 3),
             }
-            for t in PROTO.trades[-50:]
+            for t in proto.trades[-50:]
         ],
     }
+
+
+def _ok(state: Dict[str, Any], extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    payload = {"ok": True, "state": state}
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _bad(msg: str, status: int = 400):
+    return JSONResponse(status_code=status, content={"ok": False, "error": msg})
 
 
 class TradePayload(BaseModel):
@@ -245,105 +325,119 @@ class CreateDecisionPayload(BaseModel):
 
 @app.get("/api/state")
 def get_state() -> Dict[str, Any]:
-    with LOCK:
-        return protocol_state()
+    proto = _load_proto()
+    state = _state_response(proto)
+    _save_proto(proto)
+    return state
 
 
 @app.post("/api/trade")
-def post_trade(payload: TradePayload) -> Dict[str, Any]:
+def post_trade(payload: TradePayload):
     try:
-        with LOCK:
-            trade = PROTO.place_trade(
+        with _mutation_lock():
+            proto = _load_proto()
+            trade = proto.place_trade(
                 decision_id=payload.decision_id,
                 option_id=payload.option_id,
                 trader_id=payload.trader_id,
                 shares=payload.shares,
             )
-            state = protocol_state()
-        return {
-            "ok": True,
-            "trade": {
-                "decision_id": trade.decision_id,
-                "option_id": trade.option_id,
-                "trader_id": trade.trader_id,
-                "side": trade.side,
-                "shares": round(trade.shares, 4),
-                "gross_cost": round(trade.gross_cost, 4),
-                "fee_paid": round(trade.fee_paid, 4),
-                "old_cost": round(trade.old_cost, 6),
-                "new_cost": round(trade.new_cost, 6),
-                "before_probabilities": {k: round(v, 6) for k, v in trade.before_probabilities.items()},
-                "after_probabilities": {k: round(v, 6) for k, v in trade.after_probabilities.items()},
-                "ts": round(trade.ts, 3),
-            },
-            "state": state,
-        }
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(
+                state,
+                {
+                    "trade": {
+                        "decision_id": trade.decision_id,
+                        "option_id": trade.option_id,
+                        "trader_id": trade.trader_id,
+                        "side": trade.side,
+                        "shares": round(trade.shares, 4),
+                        "gross_cost": round(trade.gross_cost, 4),
+                        "fee_paid": round(trade.fee_paid, 4),
+                        "old_cost": round(trade.old_cost, 6),
+                        "new_cost": round(trade.new_cost, 6),
+                        "before_probabilities": {k: round(v, 6) for k, v in trade.before_probabilities.items()},
+                        "after_probabilities": {k: round(v, 6) for k, v in trade.after_probabilities.items()},
+                        "ts": round(trade.ts, 3),
+                    }
+                },
+            )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/resolve")
-def post_resolve(payload: ResolvePayload) -> Dict[str, Any]:
+def post_resolve(payload: ResolvePayload):
     try:
-        with LOCK:
-            PROTO.resolve_decision(
+        with _mutation_lock():
+            proto = _load_proto()
+            proto.resolve_decision(
                 decision_id=payload.decision_id,
                 winner_option_id=payload.winner_option_id,
             )
-            state = protocol_state()
-        return {"ok": True, "state": state}
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/fund")
-def post_fund(payload: FundPayload) -> Dict[str, Any]:
+def post_fund(payload: FundPayload):
     try:
-        with LOCK:
-            PROTO.fund_trader(trader_id=payload.trader_id, tokens=payload.tokens)
-            state = protocol_state()
-        return {"ok": True, "state": state}
+        with _mutation_lock():
+            proto = _load_proto()
+            proto.fund_trader(trader_id=payload.trader_id, tokens=payload.tokens)
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/window")
-def post_window(payload: WindowPayload) -> Dict[str, Any]:
+def post_window(payload: WindowPayload):
     try:
-        with LOCK:
-            PROTO.set_window_remaining(
+        with _mutation_lock():
+            proto = _load_proto()
+            proto.set_window_remaining(
                 decision_id=payload.decision_id,
                 remaining_seconds=payload.remaining_seconds,
             )
-            state = protocol_state()
-        return {"ok": True, "state": state}
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/simulate")
-def post_simulate(payload: SimulatePayload) -> Dict[str, Any]:
+def post_simulate(payload: SimulatePayload):
     try:
-        with LOCK:
-            trader_ids = [a["trader_id"] for a in PROTO.account_snapshot()]
-            executed = PROTO.simulate_trade_burst(
+        with _mutation_lock():
+            proto = _load_proto()
+            trader_ids = [a["trader_id"] for a in proto.account_snapshot()]
+            executed = proto.simulate_trade_burst(
                 decision_id=payload.decision_id,
                 trader_ids=trader_ids,
                 rounds=payload.rounds,
                 min_shares=payload.min_shares,
                 max_shares=payload.max_shares,
             )
-            state = protocol_state()
-        return {"ok": True, "executed": executed, "state": state}
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state, {"executed": executed})
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/decisions")
-def post_decisions(payload: CreateDecisionPayload) -> Dict[str, Any]:
+def post_decisions(payload: CreateDecisionPayload):
     try:
-        with LOCK:
-            PROTO.create_decision(
+        with _mutation_lock():
+            proto = _load_proto()
+            proto.create_decision(
                 decision_id=payload.decision_id,
                 title=payload.title,
                 description=payload.description,
@@ -354,16 +448,30 @@ def post_decisions(payload: CreateDecisionPayload) -> Dict[str, Any]:
                 fee_bps=payload.fee_bps,
                 window_seconds=payload.window_seconds,
             )
-            state = protocol_state()
-        return {"ok": True, "state": state}
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _bad(str(exc))
 
 
 @app.post("/api/reset")
-def post_reset() -> Dict[str, Any]:
-    global PROTO
-    with LOCK:
-        PROTO = build_protocol()
-        state = protocol_state()
-    return {"ok": True, "state": state}
+def post_reset():
+    try:
+        with _mutation_lock():
+            if REDIS is not None:
+                REDIS.delete(STATE_KEY)
+            proto = build_protocol()
+            state = _state_response(proto)
+            _save_proto(proto)
+            return _ok(state)
+    except Exception as exc:
+        return _bad(str(exc))
+
+
+@app.get("/api/health")
+def get_health() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "storage": "redis" if REDIS is not None else "memory",
+    }

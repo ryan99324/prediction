@@ -75,6 +75,17 @@ vercel
 vercel --prod
 ```
 
+### Stateful Vercel Setup (Important)
+To avoid drifting probabilities across serverless instances, set shared Redis storage:
+
+1. Create a Redis instance (e.g. Upstash Redis) and copy a `redis://...` connection URL.
+2. In Vercel Project Settings -> Environment Variables, add:
+   - `REDIS_URL=<your_redis_connection_url>`
+3. Redeploy.
+
+Health check:
+- `GET /api/health` should return `"storage": "redis"`.
+
 ## Decision model notes
 - Forecast layer: each decision has linked branch probabilities `P(branch_i)` with `sum_i P(branch_i) = 1`.
 - Value layer: `EV = p * net_success + (1 - p) * net_failure`.

@@ -67,8 +67,10 @@ class DecisionMarket:
             self.twap_integral.setdefault(option_id, 0.0)
         if self.window_seconds <= 0:
             self.window_seconds = 1800.0
-        self.window_close_ts = self.window_open_ts + self.window_seconds
-        self.last_twap_update_ts = self.window_open_ts
+        if self.window_close_ts <= 0:
+            self.window_close_ts = self.window_open_ts + self.window_seconds
+        if self.last_twap_update_ts <= 0:
+            self.last_twap_update_ts = self.window_open_ts
 
     def _cost(self, q: Dict[str, float]) -> float:
         b = self.liquidity_b
@@ -582,3 +584,150 @@ class PredictionProtocol:
             "escalated_count": len(escalated),
             "portfolio_expected_value": round(total_ev, 2),
         }
+
+    def to_dict(self) -> dict:
+        return {
+            "decisions": {
+                decision_id: {
+                    "decision_id": d.decision_id,
+                    "title": d.title,
+                    "description": d.description,
+                    "use_case": d.use_case,
+                    "branches": {
+                        option_id: {
+                            "option_id": b.option_id,
+                            "label": b.label,
+                            "success_value": b.success_value,
+                            "failure_value": b.failure_value,
+                            "implementation_cost": b.implementation_cost,
+                            "risk_penalty": b.risk_penalty,
+                        }
+                        for option_id, b in d.branches.items()
+                    },
+                    "rule": {
+                        "min_expected_value": d.rule.min_expected_value,
+                        "min_probability": d.rule.min_probability,
+                        "min_confidence": d.rule.min_confidence,
+                        "max_downside_abs": d.rule.max_downside_abs,
+                        "tie_margin": d.rule.tie_margin,
+                    },
+                    "liquidity_b": d.liquidity_b,
+                    "fee_bps": d.fee_bps,
+                    "window_seconds": d.window_seconds,
+                    "state": d.state.value,
+                    "resolved_option_id": d.resolved_option_id,
+                    "q": d.q,
+                    "window_open_ts": d.window_open_ts,
+                    "window_close_ts": d.window_close_ts,
+                    "last_twap_update_ts": d.last_twap_update_ts,
+                    "twap_integral": d.twap_integral,
+                }
+                for decision_id, d in self.decisions.items()
+            },
+            "accounts": {
+                trader_id: {
+                    "trader_id": a.trader_id,
+                    "token_balance": a.token_balance,
+                    "initial_funding": a.initial_funding,
+                    "gross_spent": a.gross_spent,
+                    "fee_spent": a.fee_spent,
+                    "realized_payout": a.realized_payout,
+                    "positions": a.positions,
+                }
+                for trader_id, a in self.accounts.items()
+            },
+            "trades": [
+                {
+                    "decision_id": t.decision_id,
+                    "option_id": t.option_id,
+                    "trader_id": t.trader_id,
+                    "shares": t.shares,
+                    "gross_cost": t.gross_cost,
+                    "fee_paid": t.fee_paid,
+                    "old_cost": t.old_cost,
+                    "new_cost": t.new_cost,
+                    "before_probabilities": t.before_probabilities,
+                    "after_probabilities": t.after_probabilities,
+                    "side": t.side,
+                    "ts": t.ts,
+                }
+                for t in self.trades
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "PredictionProtocol":
+        p = cls()
+        for decision_id, d in payload.get("decisions", {}).items():
+            branches = {
+                option_id: DecisionBranch(
+                    option_id=str(b["option_id"]),
+                    label=str(b["label"]),
+                    success_value=float(b["success_value"]),
+                    failure_value=float(b["failure_value"]),
+                    implementation_cost=float(b.get("implementation_cost", 0.0)),
+                    risk_penalty=float(b.get("risk_penalty", 0.0)),
+                )
+                for option_id, b in d.get("branches", {}).items()
+            }
+            rule_data = d.get("rule", {})
+            market = DecisionMarket(
+                decision_id=str(d["decision_id"]),
+                title=str(d["title"]),
+                description=str(d.get("description", "")),
+                use_case=str(d.get("use_case", "Custom")),
+                branches=branches,
+                rule=DecisionRule(
+                    min_expected_value=float(rule_data.get("min_expected_value", 0.0)),
+                    min_probability=float(rule_data.get("min_probability", 0.0)),
+                    min_confidence=float(rule_data.get("min_confidence", 0.0)),
+                    max_downside_abs=(
+                        None if rule_data.get("max_downside_abs") is None else float(rule_data.get("max_downside_abs"))
+                    ),
+                    tie_margin=float(rule_data.get("tie_margin", 0.0)),
+                ),
+                liquidity_b=float(d.get("liquidity_b", 120.0)),
+                fee_bps=float(d.get("fee_bps", 25.0)),
+                window_seconds=float(d.get("window_seconds", 1800.0)),
+                state=DecisionState(str(d.get("state", DecisionState.OPEN.value))),
+                resolved_option_id=d.get("resolved_option_id"),
+                q={k: float(v) for k, v in d.get("q", {}).items()},
+                window_open_ts=float(d.get("window_open_ts", time.time())),
+                window_close_ts=float(d.get("window_close_ts", 0.0)),
+                last_twap_update_ts=float(d.get("last_twap_update_ts", 0.0)),
+                twap_integral={k: float(v) for k, v in d.get("twap_integral", {}).items()},
+            )
+            p.decisions[decision_id] = market
+
+        for trader_id, a in payload.get("accounts", {}).items():
+            p.accounts[trader_id] = TraderAccount(
+                trader_id=str(a["trader_id"]),
+                token_balance=float(a.get("token_balance", 0.0)),
+                initial_funding=float(a.get("initial_funding", 0.0)),
+                gross_spent=float(a.get("gross_spent", 0.0)),
+                fee_spent=float(a.get("fee_spent", 0.0)),
+                realized_payout=float(a.get("realized_payout", 0.0)),
+                positions={
+                    str(decision_id): {str(option_id): float(sh) for option_id, sh in positions.items()}
+                    for decision_id, positions in a.get("positions", {}).items()
+                },
+            )
+
+        for t in payload.get("trades", []):
+            p.trades.append(
+                Trade(
+                    decision_id=str(t["decision_id"]),
+                    option_id=str(t["option_id"]),
+                    trader_id=str(t["trader_id"]),
+                    shares=float(t["shares"]),
+                    gross_cost=float(t["gross_cost"]),
+                    fee_paid=float(t["fee_paid"]),
+                    old_cost=float(t["old_cost"]),
+                    new_cost=float(t["new_cost"]),
+                    before_probabilities={k: float(v) for k, v in t.get("before_probabilities", {}).items()},
+                    after_probabilities={k: float(v) for k, v in t.get("after_probabilities", {}).items()},
+                    side=str(t.get("side", "BUY")),
+                    ts=float(t.get("ts", time.time())),
+                )
+            )
+        return p
