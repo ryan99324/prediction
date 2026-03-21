@@ -199,6 +199,22 @@ class PredictionProtocol:
         account.token_balance += tokens
         account.initial_funding += tokens
 
+    @staticmethod
+    def _is_reject_branch(option_id: str, label: str) -> bool:
+        text = f"{option_id} {label}".upper()
+        reject_markers = [
+            "FAIL",
+            "REJECT",
+            "NO DEAL",
+            "NO_DEAL",
+            "DO NOT",
+            "DO_NOT",
+            "CANCEL",
+            "DEFER",
+            "HOLD",
+        ]
+        return any(marker in text for marker in reject_markers)
+
     def create_decision(
         self,
         decision_id: str,
@@ -264,12 +280,17 @@ class PredictionProtocol:
             raise ValueError("decision market is not open")
         now = time.time()
         decision._update_twap(now)
-        decision.window_close_ts = now + remaining_seconds
-        if decision.window_close_ts < decision.window_open_ts:
-            decision.window_open_ts = now
-            decision.last_twap_update_ts = now
-            for option_id in decision.twap_integral:
-                decision.twap_integral[option_id] = 0.0
+        current_remaining = decision.seconds_remaining(now)
+
+        # If remaining time is reduced, emulate elapsed time so TWAP changes
+        # exactly as if the market had stayed at current prices during that interval.
+        if remaining_seconds < current_remaining:
+            fast_forward = current_remaining - remaining_seconds
+            decision.window_open_ts -= fast_forward
+            decision.last_twap_update_ts -= fast_forward
+            decision.window_close_ts -= fast_forward
+        else:
+            decision.window_close_ts = now + remaining_seconds
 
     def simulate_trade_burst(
         self,
@@ -510,10 +531,11 @@ class PredictionProtocol:
             ev = p * net_success + (1.0 - p) * net_failure
             downside = min(0.0, net_failure)
             confidence = max(0.0, (p - base) / (1.0 - base)) if n > 1 else 1.0
+            is_reject_branch = self._is_reject_branch(branch.option_id, branch.label)
 
             passes = True
             fail_reasons: List[str] = []
-            if ev < d.rule.min_expected_value:
+            if (not is_reject_branch) and ev < d.rule.min_expected_value:
                 passes = False
                 fail_reasons.append("EV below threshold")
             if p < d.rule.min_probability:
@@ -538,6 +560,7 @@ class PredictionProtocol:
                     "net_failure": round(net_failure, 2),
                     "downside": round(downside, 2),
                     "shares": round(d.q[branch.option_id], 2),
+                    "branch_role": "REJECT_BASELINE" if is_reject_branch else "GO_FORWARD",
                     "passes_rule": passes,
                     "fail_reasons": fail_reasons,
                 }

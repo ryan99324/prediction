@@ -109,6 +109,13 @@ function getDecisionById(decisionId) {
 }
 
 function fillDecisionSelectors() {
+  const prevTradeDecision = els.tradeDecision.value;
+  const prevResolveDecision = els.resolveDecision.value;
+  const prevSimDecision = els.simDecision.value;
+  const prevTradeTrader = els.tradeTrader.value;
+  const prevTradeOption = els.tradeOption.value;
+  const prevResolveOption = els.resolveOption.value;
+
   const open = state.decisions.filter((d) => d.state === "OPEN");
   const decisionOptions = open.map((d) => `<option value="${d.decision_id}">${d.decision_id} - ${d.title}</option>`).join("");
 
@@ -118,8 +125,28 @@ function fillDecisionSelectors() {
 
   els.tradeTrader.innerHTML = state.accounts.map((a) => `<option value="${a.trader_id}">${aliasOf(a.trader_id)}</option>`).join("");
 
+  if ([...els.tradeDecision.options].some((o) => o.value === prevTradeDecision)) {
+    els.tradeDecision.value = prevTradeDecision;
+  }
+  if ([...els.resolveDecision.options].some((o) => o.value === prevResolveDecision)) {
+    els.resolveDecision.value = prevResolveDecision;
+  }
+  if ([...els.simDecision.options].some((o) => o.value === prevSimDecision)) {
+    els.simDecision.value = prevSimDecision;
+  }
+  if ([...els.tradeTrader.options].some((o) => o.value === prevTradeTrader)) {
+    els.tradeTrader.value = prevTradeTrader;
+  }
+
   syncTradeOptionSelector();
   syncResolveOptionSelector();
+
+  if ([...els.tradeOption.options].some((o) => o.value === prevTradeOption)) {
+    els.tradeOption.value = prevTradeOption;
+  }
+  if ([...els.resolveOption.options].some((o) => o.value === prevResolveOption)) {
+    els.resolveOption.value = prevResolveOption;
+  }
 }
 
 function syncTradeOptionSelector() {
