@@ -113,7 +113,7 @@ class DecisionMarket:
         twap = self.twap_map(now_ts)
         sorted_by_rule = sorted(
             self.branches.keys(),
-            key=lambda k: (spot.get(k, 0.0), twap.get(k, 0.0), k),
+            key=lambda k: (twap.get(k, 0.0), spot.get(k, 0.0), k),
             reverse=True,
         )
         return sorted_by_rule[0]
@@ -162,6 +162,7 @@ class TraderAccount:
     fee_spent: float = 0.0
     realized_payout: float = 0.0
     positions: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    branch_cashflow: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -324,6 +325,7 @@ class PredictionProtocol:
         prev_gross_spent = account.gross_spent
         prev_fee_spent = account.fee_spent
         prev_position = account.positions.get(decision_id, {}).get(option_id, 0.0)
+        prev_branch_cashflow = account.branch_cashflow.get(decision_id, {}).get(option_id, 0.0)
 
         gross_cost, old_cost, new_cost, before_probs, after_probs = decision.execute_trade(
             option_id=option_id, shares=shares
@@ -336,6 +338,10 @@ class PredictionProtocol:
         account.fee_spent += fee
         account.positions.setdefault(decision_id, {})
         account.positions[decision_id][option_id] = account.positions[decision_id].get(option_id, 0.0) + shares
+        account.branch_cashflow.setdefault(decision_id, {})
+        account.branch_cashflow[decision_id][option_id] = (
+            account.branch_cashflow[decision_id].get(option_id, 0.0) - total_cost
+        )
 
         if account.token_balance < 0 or account.token_balance < self._required_collateral(account):
             # Rollback state if liquidity/collateral checks fail.
@@ -345,6 +351,8 @@ class PredictionProtocol:
             account.fee_spent = prev_fee_spent
             if decision_id in account.positions:
                 account.positions[decision_id][option_id] = prev_position
+            if decision_id in account.branch_cashflow:
+                account.branch_cashflow[decision_id][option_id] = prev_branch_cashflow
             raise ValueError("insufficient collateral for trade")
 
         trade = Trade(
@@ -375,7 +383,18 @@ class PredictionProtocol:
         decision.resolved_option_id = winner_option_id
 
         for account in self.accounts.values():
-            shares = account.positions.get(decision_id, {}).get(winner_option_id, 0.0)
+            decision_positions = account.positions.setdefault(decision_id, {})
+            decision_cashflow = account.branch_cashflow.setdefault(decision_id, {})
+            for option_id in decision.branches:
+                if option_id == winner_option_id:
+                    continue
+                reverted = decision_cashflow.get(option_id, 0.0)
+                if reverted != 0.0:
+                    account.token_balance -= reverted
+                decision_cashflow[option_id] = 0.0
+                decision_positions[option_id] = 0.0
+
+            shares = decision_positions.get(winner_option_id, 0.0)
             account.token_balance += shares
             account.realized_payout += shares
 
@@ -484,7 +503,8 @@ class PredictionProtocol:
 
         options = []
         for branch in d.branches.values():
-            p = probs[branch.option_id]
+            p_spot = probs[branch.option_id]
+            p = twap[branch.option_id]
             net_success = branch.success_value - branch.implementation_cost - branch.risk_penalty
             net_failure = branch.failure_value - branch.implementation_cost - branch.risk_penalty
             ev = p * net_success + (1.0 - p) * net_failure
@@ -510,7 +530,7 @@ class PredictionProtocol:
                 {
                     "option_id": branch.option_id,
                     "label": branch.label,
-                    "p_success": round(p, 4),
+                    "p_success": round(p_spot, 4),
                     "p_twap": round(twap[branch.option_id], 4),
                     "confidence": round(confidence, 4),
                     "expected_value": round(ev, 2),
@@ -633,6 +653,7 @@ class PredictionProtocol:
                     "fee_spent": a.fee_spent,
                     "realized_payout": a.realized_payout,
                     "positions": a.positions,
+                    "branch_cashflow": a.branch_cashflow,
                 }
                 for trader_id, a in self.accounts.items()
             },
@@ -710,6 +731,10 @@ class PredictionProtocol:
                 positions={
                     str(decision_id): {str(option_id): float(sh) for option_id, sh in positions.items()}
                     for decision_id, positions in a.get("positions", {}).items()
+                },
+                branch_cashflow={
+                    str(decision_id): {str(option_id): float(v) for option_id, v in flows.items()}
+                    for decision_id, flows in a.get("branch_cashflow", {}).items()
                 },
             )
 

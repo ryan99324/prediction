@@ -5,6 +5,7 @@
   decisions: [],
   trader_metrics: [],
   summary: null,
+  aliases: {},
 };
 
 const palette = ["#0e7a62", "#155f90", "#d06b2f", "#8d4ab4", "#b03e6d"];
@@ -86,6 +87,15 @@ function fmtSecs(secs) {
   return `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
 }
 
+function aliasOf(traderId) {
+  if (!traderId) return "anon";
+  if (!state.aliases[traderId]) {
+    const next = Object.keys(state.aliases).length + 1;
+    state.aliases[traderId] = `anon_${String(next).padStart(2, "0")}`;
+  }
+  return state.aliases[traderId];
+}
+
 function setTab(tabName) {
   tabPanels.forEach((p) => p.classList.toggle("active", p.id === `tab-${tabName}`));
   tabButtons.forEach((b) => b.classList.toggle("active", b.dataset.tab === tabName));
@@ -106,7 +116,7 @@ function fillDecisionSelectors() {
   els.resolveDecision.innerHTML = decisionOptions;
   els.simDecision.innerHTML = decisionOptions;
 
-  els.tradeTrader.innerHTML = state.accounts.map((a) => `<option value="${a.trader_id}">${a.trader_id}</option>`).join("");
+  els.tradeTrader.innerHTML = state.accounts.map((a) => `<option value="${a.trader_id}">${aliasOf(a.trader_id)}</option>`).join("");
 
   syncTradeOptionSelector();
   syncResolveOptionSelector();
@@ -172,6 +182,7 @@ function renderDecisions() {
           <div class="rule">Use Case: ${d.use_case}</div>
           <div class="rule">Linked branch market check: probability sum = ${d.probability_sum.toFixed(4)} (target 1.0000)</div>
           <div class="rule">Window status: ${d.state} | Time remaining: ${fmtSecs(d.seconds_remaining)}</div>
+          <div class="rule">Close rule: highest TWAP branch wins (spot only breaks ties). Non-winning branch trades are reverted.</div>
           <div class="rule">
             Policy: EV >= ${fmtMoney(d.rule.min_expected_value)}, P >= ${fmtPct(d.rule.min_probability)},
             confidence >= ${fmtPct(d.rule.min_confidence)}, downside <= ${d.rule.max_downside_abs === null ? "N/A" : `${fmtMoney(d.rule.max_downside_abs)} loss`}
@@ -235,7 +246,7 @@ function renderAccounts() {
   els.accounts.innerHTML = state.accounts
     .map(
       (a) =>
-        `<span class="chip">${a.trader_id}: ${a.token_balance.toFixed(2)} tok | locked ${a.locked_collateral.toFixed(
+        `<span class="chip">${aliasOf(a.trader_id)}: ${a.token_balance.toFixed(2)} tok | locked ${a.locked_collateral.toFixed(
           2
         )} | avail ${a.available_balance.toFixed(2)}</span>`
     )
@@ -248,7 +259,7 @@ function renderTrades() {
     .map(
       (t) => `
       <tr>
-        <td>${t.trader_id}</td>
+        <td>${aliasOf(t.trader_id)}</td>
         <td>${t.decision_id}</td>
         <td>${t.option_id}</td>
         <td>${t.side}</td>
@@ -266,7 +277,7 @@ function renderIncentives() {
     .map(
       (r) => `
       <tr>
-        <td>${r.trader_id}</td>
+        <td>${aliasOf(r.trader_id)}</td>
         <td>${fmtMoney(r.initial_funding)}</td>
         <td>${fmtMoney(r.total_spent)}</td>
         <td>${fmtMoney(r.realized_payout)}</td>
@@ -285,7 +296,7 @@ function renderTradeMath() {
     .map(
       (t) => `
       <tr>
-        <td>${t.trader_id}</td>
+        <td>${aliasOf(t.trader_id)}</td>
         <td>${t.decision_id}</td>
         <td>${t.option_id}</td>
         <td>${t.side}</td>
