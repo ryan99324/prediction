@@ -88,10 +88,10 @@ function fmtSecs(secs) {
 }
 
 function aliasOf(traderId) {
-  if (!traderId) return "anon";
+  if (!traderId) return "Team";
   if (!state.aliases[traderId]) {
     const next = Object.keys(state.aliases).length + 1;
-    state.aliases[traderId] = `anon_${String(next).padStart(2, "0")}`;
+    state.aliases[traderId] = `Team ${next}`;
   }
   return state.aliases[traderId];
 }
