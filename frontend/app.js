@@ -29,9 +29,7 @@ const els = {
   tradeForm: document.getElementById("tradeForm"),
   tradeDecision: document.getElementById("tradeDecision"),
   tradeOption: document.getElementById("tradeOption"),
-  tradeTrader: document.getElementById("tradeTrader"),
-  tradeSide: document.getElementById("tradeSide"),
-  tradeShares: document.getElementById("tradeShares"),
+  tradeTrader: document.getElementById("tradeTrader"),  tradeShares: document.getElementById("tradeShares"),
   resolveForm: document.getElementById("resolveForm"),
   resolveDecision: document.getElementById("resolveDecision"),
   resolveOption: document.getElementById("resolveOption"),
@@ -391,7 +389,7 @@ els.tradeForm.addEventListener("submit", async (event) => {
       decision_id: els.tradeDecision.value,
       option_id: els.tradeOption.value,
       trader_id: els.tradeTrader.value,
-      shares: Number(els.tradeShares.value) * (els.tradeSide.value === "SELL" ? -1 : 1),
+      shares: Number(els.tradeShares.value),
     };
     const out = await apiPost("/api/trade", payload);
     setStatus(`Trade executed: ${out.trade.trader_id} ${out.trade.side} ${Math.abs(out.trade.shares).toFixed(2)} ${out.trade.option_id} on ${out.trade.decision_id}.`);
@@ -504,3 +502,4 @@ fetchState().then(() => setStatus("Linked decision markets loaded.")).catch((err
 setInterval(() => {
   fetchState().catch(() => {});
 }, 3000);
+

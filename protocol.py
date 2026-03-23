@@ -128,8 +128,8 @@ class DecisionMarket:
             raise ValueError("decision market is not open")
         if option_id not in self.branches:
             raise ValueError("unknown option_id")
-        if shares == 0:
-            raise ValueError("shares cannot be zero")
+        if shares <= 0:
+            raise ValueError("shares must be positive (shorting disabled)")
 
         old_cost = self._cost(self.q)
         new_q = dict(self.q)
@@ -315,8 +315,7 @@ class PredictionProtocol:
                 break
             trader_id = random.choice(trader_ids)
             option_id = random.choice(option_ids)
-            side = random.choice([1.0, 1.0, 1.0, -1.0])  # biased toward buys for visible movement
-            shares = round(random.uniform(min_shares, max_shares), 2) * side
+            shares = round(random.uniform(min_shares, max_shares), 2)
             try:
                 self.place_trade(
                     decision_id=decision_id,
@@ -339,8 +338,8 @@ class PredictionProtocol:
         if decision.state != DecisionState.OPEN:
             raise ValueError("decision market is not open")
 
-        if shares == 0:
-            raise ValueError("shares cannot be zero")
+        if shares <= 0:
+            raise ValueError("shares must be positive (shorting disabled)")
 
         prev_balance = account.token_balance
         prev_gross_spent = account.gross_spent
@@ -387,7 +386,7 @@ class PredictionProtocol:
             new_cost=new_cost,
             before_probabilities=before_probs,
             after_probabilities=after_probs,
-            side="BUY" if shares > 0 else "SELL",
+            side="BUY",
             ts=time.time(),
         )
         self.trades.append(trade)
@@ -779,3 +778,7 @@ class PredictionProtocol:
                 )
             )
         return p
+
+
+
+
