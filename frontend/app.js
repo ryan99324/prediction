@@ -6,6 +6,7 @@
   trader_metrics: [],
   summary: null,
   aliases: {},
+  auth: null,
 };
 
 const palette = ["#0e7a62", "#155f90", "#d06b2f", "#8d4ab4", "#b03e6d"];
@@ -29,7 +30,8 @@ const els = {
   tradeForm: document.getElementById("tradeForm"),
   tradeDecision: document.getElementById("tradeDecision"),
   tradeOption: document.getElementById("tradeOption"),
-  tradeTrader: document.getElementById("tradeTrader"),  tradeShares: document.getElementById("tradeShares"),
+  tradeTrader: document.getElementById("tradeTrader"),
+  tradeShares: document.getElementById("tradeShares"),
   resolveForm: document.getElementById("resolveForm"),
   resolveDecision: document.getElementById("resolveDecision"),
   resolveOption: document.getElementById("resolveOption"),
@@ -45,6 +47,12 @@ const els = {
   fundTraderId: document.getElementById("fundTraderId"),
   fundTraderTokens: document.getElementById("fundTraderTokens"),
   resetBtn: document.getElementById("resetBtn"),
+  loginForm: document.getElementById("loginForm"),
+  loginUsername: document.getElementById("loginUsername"),
+  loginPassword: document.getElementById("loginPassword"),
+  sessionBar: document.getElementById("sessionBar"),
+  sessionWho: document.getElementById("sessionWho"),
+  logoutBtn: document.getElementById("logoutBtn"),
   status: document.getElementById("status"),
   menuSelect: document.getElementById("menuSelect"),
 };
@@ -121,7 +129,11 @@ function fillDecisionSelectors() {
   els.resolveDecision.innerHTML = decisionOptions;
   els.simDecision.innerHTML = decisionOptions;
 
-  els.tradeTrader.innerHTML = state.accounts.map((a) => `<option value="${a.trader_id}">${aliasOf(a.trader_id)}</option>`).join("");
+  const allowedAccounts =
+    state.auth?.role === "admin"
+      ? state.accounts
+      : state.accounts.filter((a) => a.trader_id === state.auth?.trader_id);
+  els.tradeTrader.innerHTML = allowedAccounts.map((a) => `<option value="${a.trader_id}">${aliasOf(a.trader_id)}</option>`).join("");
 
   if ([...els.tradeDecision.options].some((o) => o.value === prevTradeDecision)) {
     els.tradeDecision.value = prevTradeDecision;
@@ -132,7 +144,9 @@ function fillDecisionSelectors() {
   if ([...els.simDecision.options].some((o) => o.value === prevSimDecision)) {
     els.simDecision.value = prevSimDecision;
   }
-  if ([...els.tradeTrader.options].some((o) => o.value === prevTradeTrader)) {
+  if (state.auth?.role !== "admin" && state.auth?.trader_id) {
+    els.tradeTrader.value = state.auth.trader_id;
+  } else if ([...els.tradeTrader.options].some((o) => o.value === prevTradeTrader)) {
     els.tradeTrader.value = prevTradeTrader;
   }
 
@@ -346,8 +360,33 @@ function hydrateState(data) {
   state.trader_metrics = data.trader_metrics || [];
 }
 
+function applyRoleUi() {
+  const role = state.auth?.role || "";
+  const isAdmin = role === "admin";
+
+  if (els.tradeTrader) {
+    els.tradeTrader.disabled = !isAdmin;
+  }
+  if (els.resolveForm) {
+    els.resolveForm.style.display = isAdmin ? "" : "none";
+  }
+  if (els.simControlForm) {
+    els.simControlForm.style.display = isAdmin ? "" : "none";
+  }
+  if (els.resetBtn) {
+    els.resetBtn.style.display = isAdmin ? "" : "none";
+  }
+
+  tabButtons.forEach((btn) => {
+    if (btn.dataset.tab === "leadership") {
+      btn.style.display = isAdmin ? "" : "none";
+    }
+  });
+}
+
 function renderAll() {
   fillDecisionSelectors();
+  applyRoleUi();
   renderSummary();
   renderDecisions();
   renderMarkets();
@@ -357,9 +396,28 @@ function renderAll() {
   renderTradeMath();
 }
 
-async function fetchState() {
-  const res = await fetch("/api/state");
+async function fetchMe() {
+  const res = await fetch("/api/me", { credentials: "include" });
   const data = await res.json();
+  if (!data.ok) {
+    state.auth = null;
+    els.loginForm.style.display = "";
+    els.sessionBar.style.display = "none";
+    throw new Error(data.error || "Not logged in");
+  }
+  state.auth = data.session;
+  els.loginForm.style.display = "none";
+  els.sessionBar.style.display = "";
+  els.sessionWho.textContent = `${data.session.username} (${data.session.role})`;
+  return data.session;
+}
+
+async function fetchState() {
+  const res = await fetch("/api/state", { credentials: "include" });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Unauthorized");
+  }
   hydrateState(data);
   renderAll();
 }
@@ -369,13 +427,16 @@ async function apiPost(path, payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
   const data = await res.json();
   if (!data.ok) {
     throw new Error(data.error || "Operation failed");
   }
-  hydrateState(data.state);
-  renderAll();
+  if (data.state) {
+    hydrateState(data.state);
+    renderAll();
+  }
   return data;
 }
 
@@ -385,10 +446,11 @@ els.resolveDecision.addEventListener("change", syncResolveOptionSelector);
 els.tradeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
+    const traderId = state.auth?.role === "admin" ? els.tradeTrader.value : state.auth?.trader_id;
     const payload = {
       decision_id: els.tradeDecision.value,
       option_id: els.tradeOption.value,
-      trader_id: els.tradeTrader.value,
+      trader_id: traderId,
       shares: Number(els.tradeShares.value),
     };
     const out = await apiPost("/api/trade", payload);
@@ -491,6 +553,32 @@ els.resetBtn.addEventListener("click", async () => {
   }
 });
 
+els.loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await apiPost("/api/login", {
+      username: els.loginUsername.value.trim(),
+      password: els.loginPassword.value,
+    });
+    els.loginPassword.value = "";
+    await fetchMe();
+    await fetchState();
+    setStatus("Logged in successfully.");
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+});
+
+els.logoutBtn.addEventListener("click", async () => {
+  try {
+    await apiPost("/api/logout", {});
+  } catch (_) {}
+  state.auth = null;
+  els.loginForm.style.display = "";
+  els.sessionBar.style.display = "none";
+  setStatus("Logged out.");
+});
+
 tabButtons.forEach((btn) => {
   btn.addEventListener("click", () => setTab(btn.dataset.tab));
 });
@@ -498,8 +586,18 @@ if (els.menuSelect) {
   els.menuSelect.addEventListener("change", () => setTab(els.menuSelect.value));
 }
 
-fetchState().then(() => setStatus("Linked decision markets loaded.")).catch((err) => setStatus(err.message, true));
+(async () => {
+  try {
+    await fetchMe();
+    await fetchState();
+    setStatus("Linked decision markets loaded.");
+  } catch (err) {
+    setStatus("Login required.", true);
+  }
+})();
+
 setInterval(() => {
+  if (!state.auth) return;
   fetchState().catch(() => {});
 }, 3000);
 

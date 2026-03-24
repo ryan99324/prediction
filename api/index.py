@@ -6,9 +6,9 @@ import time
 import uuid
 from contextlib import contextmanager
 from threading import Lock
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -23,12 +23,51 @@ except Exception:  # pragma: no cover
 app = FastAPI(title="Decision Market API", version="1.1.0")
 LOCAL_LOCK = Lock()
 LOCAL_PROTO: PredictionProtocol | None = None
+LOCAL_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 REDIS_URL = os.getenv("REDIS_URL") or os.getenv("KV_URL") or os.getenv("UPSTASH_REDIS_REST_URL")
 USE_REDIS = bool(REDIS_URL and Redis is not None and str(REDIS_URL).startswith("redis"))
 REDIS = Redis.from_url(REDIS_URL, decode_responses=True) if USE_REDIS else None
 STATE_KEY = "pm:state:v2"
 LOCK_KEY = "pm:lock:v2"
+SESSION_KEY_PREFIX = "pm:session:v1:"
+SESSION_COOKIE = "pm_session"
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "43200"))  # 12h
+
+
+def _load_users() -> Dict[str, Dict[str, str]]:
+    raw = os.getenv("APP_USERS_JSON", "").strip()
+    if raw:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("APP_USERS_JSON must be a JSON object")
+        return parsed
+
+    return {
+        "admin": {"password": os.getenv("ADMIN_PASSWORD", "admin123"), "role": "admin", "trader_id": "admin"},
+        "team1": {"password": "team1", "role": "team", "trader_id": "team_1"},
+        "team2": {"password": "team2", "role": "team", "trader_id": "team_2"},
+        "team3": {"password": "team3", "role": "team", "trader_id": "team_3"},
+        "team4": {"password": "team4", "role": "team", "trader_id": "team_4"},
+        "team5": {"password": "team5", "role": "team", "trader_id": "team_5"},
+        "team6": {"password": "team6", "role": "team", "trader_id": "team_6"},
+        "team7": {"password": "team7", "role": "team", "trader_id": "team_7"},
+        "team8": {"password": "team8", "role": "team", "trader_id": "team_8"},
+    }
+
+
+USERS = _load_users()
+
+
+def _ensure_user_accounts(proto: PredictionProtocol) -> None:
+    for username, user in USERS.items():
+        if user.get("role") != "team":
+            continue
+        trader_id = user.get("trader_id")
+        if not trader_id:
+            continue
+        if trader_id not in proto.accounts:
+            proto.fund_trader(trader_id, 700.0)
 
 
 def build_protocol() -> PredictionProtocol:
@@ -175,12 +214,14 @@ def build_protocol() -> PredictionProtocol:
     )
 
     for trader in [
-        "finance_lead",
-        "product_mgr",
-        "sales_director",
-        "corp_dev",
-        "strategy_office",
-        "ops_lead",
+        "team_1",
+        "team_2",
+        "team_3",
+        "team_4",
+        "team_5",
+        "team_6",
+        "team_7",
+        "team_8",
     ]:
         proto.fund_trader(trader, 700.0)
 
@@ -192,13 +233,18 @@ def _load_proto() -> PredictionProtocol:
     if REDIS is None:
         if LOCAL_PROTO is None:
             LOCAL_PROTO = build_protocol()
+            _ensure_user_accounts(LOCAL_PROTO)
         return LOCAL_PROTO
 
     raw = REDIS.get(STATE_KEY)
     if raw:
-        return PredictionProtocol.from_dict(json.loads(raw))
+        proto = PredictionProtocol.from_dict(json.loads(raw))
+        _ensure_user_accounts(proto)
+        REDIS.set(STATE_KEY, json.dumps(proto.to_dict()))
+        return proto
 
     proto = build_protocol()
+    _ensure_user_accounts(proto)
     REDIS.set(STATE_KEY, json.dumps(proto.to_dict()))
     return proto
 
@@ -282,11 +328,72 @@ def _bad(msg: str, status: int = 400):
     return JSONResponse(status_code=status, content={"ok": False, "error": msg})
 
 
+def _session_key(session_id: str) -> str:
+    return f"{SESSION_KEY_PREFIX}{session_id}"
+
+
+def _save_session(session_id: str, session: Dict[str, str]) -> None:
+    if REDIS is None:
+        global LOCAL_SESSIONS
+        LOCAL_SESSIONS[session_id] = {"session": session, "expires_at": time.time() + SESSION_TTL_SECONDS}
+        return
+    REDIS.setex(_session_key(session_id), SESSION_TTL_SECONDS, json.dumps(session))
+
+
+def _delete_session(session_id: str) -> None:
+    if not session_id:
+        return
+    if REDIS is None:
+        LOCAL_SESSIONS.pop(session_id, None)
+        return
+    REDIS.delete(_session_key(session_id))
+
+
+def _get_session(request: Request) -> Optional[Dict[str, str]]:
+    session_id = request.cookies.get(SESSION_COOKIE)
+    if not session_id:
+        return None
+
+    if REDIS is None:
+        rec = LOCAL_SESSIONS.get(session_id)
+        if rec is None:
+            return None
+        if float(rec.get("expires_at", 0)) < time.time():
+            LOCAL_SESSIONS.pop(session_id, None)
+            return None
+        return rec.get("session")
+
+    raw = REDIS.get(_session_key(session_id))
+    if not raw:
+        return None
+    REDIS.expire(_session_key(session_id), SESSION_TTL_SECONDS)
+    return json.loads(raw)
+
+
+def _require_auth(request: Request) -> Dict[str, str]:
+    session = _get_session(request)
+    if not session:
+        raise PermissionError("Please login first")
+    return session
+
+
+def _require_admin(request: Request) -> Dict[str, str]:
+    session = _require_auth(request)
+    if session.get("role") != "admin":
+        raise PermissionError("Admin role required")
+    return session
+
+
 class TradePayload(BaseModel):
     decision_id: str
     option_id: str
-    trader_id: str
+    trader_id: Optional[str] = None
     shares: float
+
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
 
 
 class ResolvePayload(BaseModel):
@@ -324,22 +431,75 @@ class CreateDecisionPayload(BaseModel):
 
 
 @app.get("/api/state")
-def get_state() -> Dict[str, Any]:
-    proto = _load_proto()
-    state = _state_response(proto)
-    _save_proto(proto)
-    return state
+def get_state(request: Request) -> Dict[str, Any]:
+    try:
+        _require_auth(request)
+        proto = _load_proto()
+        state = _state_response(proto)
+        _save_proto(proto)
+        return state
+    except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=401)
+        return _bad(str(exc))
+
+
+@app.post("/api/login")
+def post_login(payload: LoginPayload, response: Response):
+    user = USERS.get(payload.username)
+    if not user or user.get("password") != payload.password:
+        return _bad("Invalid username or password", status=401)
+
+    session = {
+        "username": payload.username,
+        "role": user.get("role", "team"),
+        "trader_id": user.get("trader_id", payload.username),
+    }
+    session_id = str(uuid.uuid4())
+    _save_session(session_id, session)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_id,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=SESSION_TTL_SECONDS,
+    )
+    return {"ok": True, "session": session}
+
+
+@app.post("/api/logout")
+def post_logout(request: Request, response: Response):
+    session_id = request.cookies.get(SESSION_COOKIE, "")
+    _delete_session(session_id)
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def get_me(request: Request):
+    session = _get_session(request)
+    if not session:
+        return _bad("Not logged in", status=401)
+    return {"ok": True, "session": session}
 
 
 @app.post("/api/trade")
-def post_trade(payload: TradePayload):
+def post_trade(payload: TradePayload, request: Request):
     try:
+        session = _require_auth(request)
+        trader_id = session.get("trader_id", "")
+        if session.get("role") == "admin":
+            trader_id = payload.trader_id or trader_id
+        if not trader_id:
+            return _bad("No trader assigned to this session", status=403)
+
         with _mutation_lock():
             proto = _load_proto()
             trade = proto.place_trade(
                 decision_id=payload.decision_id,
                 option_id=payload.option_id,
-                trader_id=payload.trader_id,
+                trader_id=trader_id,
                 shares=payload.shares,
             )
             state = _state_response(proto)
@@ -364,12 +524,15 @@ def post_trade(payload: TradePayload):
                 },
             )
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/resolve")
-def post_resolve(payload: ResolvePayload):
+def post_resolve(payload: ResolvePayload, request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             proto = _load_proto()
             proto.resolve_decision(
@@ -380,12 +543,15 @@ def post_resolve(payload: ResolvePayload):
             _save_proto(proto)
             return _ok(state)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/fund")
-def post_fund(payload: FundPayload):
+def post_fund(payload: FundPayload, request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             proto = _load_proto()
             proto.fund_trader(trader_id=payload.trader_id, tokens=payload.tokens)
@@ -393,12 +559,15 @@ def post_fund(payload: FundPayload):
             _save_proto(proto)
             return _ok(state)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/window")
-def post_window(payload: WindowPayload):
+def post_window(payload: WindowPayload, request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             proto = _load_proto()
             proto.set_window_remaining(
@@ -409,12 +578,15 @@ def post_window(payload: WindowPayload):
             _save_proto(proto)
             return _ok(state)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/simulate")
-def post_simulate(payload: SimulatePayload):
+def post_simulate(payload: SimulatePayload, request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             proto = _load_proto()
             trader_ids = [a["trader_id"] for a in proto.account_snapshot()]
@@ -429,12 +601,15 @@ def post_simulate(payload: SimulatePayload):
             _save_proto(proto)
             return _ok(state, {"executed": executed})
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/decisions")
-def post_decisions(payload: CreateDecisionPayload):
+def post_decisions(payload: CreateDecisionPayload, request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             proto = _load_proto()
             proto.create_decision(
@@ -452,12 +627,15 @@ def post_decisions(payload: CreateDecisionPayload):
             _save_proto(proto)
             return _ok(state)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 
 @app.post("/api/reset")
-def post_reset():
+def post_reset(request: Request):
     try:
+        _require_admin(request)
         with _mutation_lock():
             if REDIS is not None:
                 REDIS.delete(STATE_KEY)
@@ -466,6 +644,8 @@ def post_reset():
             _save_proto(proto)
             return _ok(state)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            return _bad(str(exc), status=403)
         return _bad(str(exc))
 
 

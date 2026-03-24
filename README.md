@@ -10,8 +10,8 @@ This folder contains a decision-focused internal prediction market system: backe
   - M&A (2 scenarios)
   - Product Launch
   - Pricing
-- Two-sided trading: `BUY` and `SELL (short)` per branch
-- Collateralized shorting with risk controls (locked collateral + available balance)
+- Buy-only branch trading per decision
+- Team login + admin control-room permissions
 - Leadership operations:
   - create new decisions live
   - fund/onboard new traders
@@ -50,8 +50,11 @@ python server.py
 Open `http://127.0.0.1:8000`.
 
 ## API
-- `GET /api/state`: full state (markets, decisions, accounts, trades, summary)
-- `POST /api/trade`: execute trade using `decision_id`, `option_id`, `trader_id`, `shares`
+- `POST /api/login`: login with `username`, `password` (sets session cookie)
+- `POST /api/logout`: clear session
+- `GET /api/me`: current session identity/role
+- `GET /api/state`: full state (auth required)
+- `POST /api/trade`: execute trade using `decision_id`, `option_id`, `shares`
 - `POST /api/resolve`: resolve decision using `decision_id`, `winner_option_id`
 - `POST /api/decisions`: create decision using `decision_id`, `title`, `description`, `options`, optional `rule`, `liquidity_b`, `fee_bps`
 - `POST /api/fund`: fund trader using `trader_id`, `tokens`
@@ -83,6 +86,14 @@ To avoid drifting probabilities across serverless instances, set shared Redis st
    - `REDIS_URL=<your_redis_connection_url>`
 3. Redeploy.
 
+### Auth Setup (Important)
+Default credentials (change before real use):
+- `admin / admin123`
+- `team1 / team1` ... `team8 / team8`
+
+Override users via:
+- `APP_USERS_JSON` (JSON object of users with `password`, `role`, `trader_id`)
+
 Health check:
 - `GET /api/health` should return `"storage": "redis"`.
 
@@ -91,8 +102,7 @@ Health check:
 - Value layer: `EV = p * net_success + (1 - p) * net_failure`.
 - Policy layer: option must pass governance thresholds to be eligible.
 - Action layer: pick highest-EV eligible option, else escalate/defer.
-- Trading layer: signed shares (`+` buy, `-` sell/short), with LMSR delta-cost pricing.
-- Risk layer: short exposure requires collateral based on worst-case open decision liability.
+- Trading layer: buy-only shares with LMSR delta-cost pricing.
 
 ## Suggested next extensions
 - Add authentication, role-based permissions, and audit trails
