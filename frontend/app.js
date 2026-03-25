@@ -94,6 +94,10 @@ function fmtSecs(secs) {
 
 function aliasOf(traderId) {
   if (!traderId) return "Team";
+  const m = String(traderId).match(/team[\s_-]?(\d+)/i);
+  if (m) {
+    return `Team ${Number(m[1])}`;
+  }
   if (!state.aliases[traderId]) {
     const next = Object.keys(state.aliases).length + 1;
     state.aliases[traderId] = `Team ${next}`;
