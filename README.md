@@ -50,7 +50,7 @@ python server.py
 Open `http://127.0.0.1:8000`.
 
 ## API
-- `POST /api/login`: login with `username`, `password` (sets session cookie)
+- `POST /api/login`: login with `username` (sets session cookie)
 - `POST /api/logout`: clear session
 - `GET /api/me`: current session identity/role
 - `GET /api/state`: full state (auth required)
@@ -87,12 +87,12 @@ To avoid drifting probabilities across serverless instances, set shared Redis st
 3. Redeploy.
 
 ### Auth Setup (Important)
-Default credentials (change before real use):
-- `admin / admin123`
-- `team1 / team1` ... `team8 / team8`
+Default usernames:
+- `admin`
+- `team1` ... `team11`
 
 Override users via:
-- `APP_USERS_JSON` (JSON object of users with `password`, `role`, `trader_id`)
+- `APP_USERS_JSON` (JSON object of users with `role`, `trader_id`)
 
 Health check:
 - `GET /api/health` should return `"storage": "redis"`.

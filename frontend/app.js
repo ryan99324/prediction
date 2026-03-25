@@ -49,7 +49,6 @@ const els = {
   resetBtn: document.getElementById("resetBtn"),
   loginForm: document.getElementById("loginForm"),
   loginUsername: document.getElementById("loginUsername"),
-  loginPassword: document.getElementById("loginPassword"),
   sessionBar: document.getElementById("sessionBar"),
   sessionWho: document.getElementById("sessionWho"),
   logoutBtn: document.getElementById("logoutBtn"),
@@ -558,9 +557,7 @@ els.loginForm.addEventListener("submit", async (event) => {
   try {
     await apiPost("/api/login", {
       username: els.loginUsername.value.trim(),
-      password: els.loginPassword.value,
     });
-    els.loginPassword.value = "";
     await fetchMe();
     await fetchState();
     setStatus("Logged in successfully.");

@@ -44,15 +44,18 @@ def _load_users() -> Dict[str, Dict[str, str]]:
         return parsed
 
     return {
-        "admin": {"password": os.getenv("ADMIN_PASSWORD", "admin123"), "role": "admin", "trader_id": "admin"},
-        "team1": {"password": "team1", "role": "team", "trader_id": "team_1"},
-        "team2": {"password": "team2", "role": "team", "trader_id": "team_2"},
-        "team3": {"password": "team3", "role": "team", "trader_id": "team_3"},
-        "team4": {"password": "team4", "role": "team", "trader_id": "team_4"},
-        "team5": {"password": "team5", "role": "team", "trader_id": "team_5"},
-        "team6": {"password": "team6", "role": "team", "trader_id": "team_6"},
-        "team7": {"password": "team7", "role": "team", "trader_id": "team_7"},
-        "team8": {"password": "team8", "role": "team", "trader_id": "team_8"},
+        "admin": {"role": "admin", "trader_id": "admin"},
+        "team1": {"role": "team", "trader_id": "team_1"},
+        "team2": {"role": "team", "trader_id": "team_2"},
+        "team3": {"role": "team", "trader_id": "team_3"},
+        "team4": {"role": "team", "trader_id": "team_4"},
+        "team5": {"role": "team", "trader_id": "team_5"},
+        "team6": {"role": "team", "trader_id": "team_6"},
+        "team7": {"role": "team", "trader_id": "team_7"},
+        "team8": {"role": "team", "trader_id": "team_8"},
+        "team9": {"role": "team", "trader_id": "team_9"},
+        "team10": {"role": "team", "trader_id": "team_10"},
+        "team11": {"role": "team", "trader_id": "team_11"},
     }
 
 
@@ -222,6 +225,9 @@ def build_protocol() -> PredictionProtocol:
         "team_6",
         "team_7",
         "team_8",
+        "team_9",
+        "team_10",
+        "team_11",
     ]:
         proto.fund_trader(trader, 700.0)
 
@@ -393,7 +399,6 @@ class TradePayload(BaseModel):
 
 class LoginPayload(BaseModel):
     username: str
-    password: str
 
 
 class ResolvePayload(BaseModel):
@@ -447,8 +452,8 @@ def get_state(request: Request) -> Dict[str, Any]:
 @app.post("/api/login")
 def post_login(payload: LoginPayload, response: Response):
     user = USERS.get(payload.username)
-    if not user or user.get("password") != payload.password:
-        return _bad("Invalid username or password", status=401)
+    if not user:
+        return _bad("Invalid username", status=401)
 
     session = {
         "username": payload.username,
