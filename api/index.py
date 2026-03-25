@@ -36,14 +36,7 @@ SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "43200"))  # 12h
 
 
 def _load_users() -> Dict[str, Dict[str, str]]:
-    raw = os.getenv("APP_USERS_JSON", "").strip()
-    if raw:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("APP_USERS_JSON must be a JSON object")
-        return parsed
-
-    return {
+    default_users: Dict[str, Dict[str, str]] = {
         "admin": {"role": "admin", "trader_id": "admin"},
         "team1": {"role": "team", "trader_id": "team_1"},
         "team2": {"role": "team", "trader_id": "team_2"},
@@ -57,6 +50,18 @@ def _load_users() -> Dict[str, Dict[str, str]]:
         "team10": {"role": "team", "trader_id": "team_10"},
         "team11": {"role": "team", "trader_id": "team_11"},
     }
+
+    raw = os.getenv("APP_USERS_JSON", "").strip()
+    if raw:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("APP_USERS_JSON must be a JSON object")
+        normalized = {str(k).strip().lower(): v for k, v in parsed.items()}
+        merged = dict(default_users)
+        merged.update(normalized)
+        return merged
+
+    return default_users
 
 
 USERS = _load_users()
@@ -451,14 +456,15 @@ def get_state(request: Request) -> Dict[str, Any]:
 
 @app.post("/api/login")
 def post_login(payload: LoginPayload, response: Response):
-    user = USERS.get(payload.username)
+    username = payload.username.strip().lower()
+    user = USERS.get(username)
     if not user:
         return _bad("Invalid username", status=401)
 
     session = {
-        "username": payload.username,
+        "username": username,
         "role": user.get("role", "team"),
-        "trader_id": user.get("trader_id", payload.username),
+        "trader_id": user.get("trader_id", username),
     }
     session_id = str(uuid.uuid4())
     _save_session(session_id, session)

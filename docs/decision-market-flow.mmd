@@ -1,0 +1,26 @@
+﻿flowchart TD
+  A[Leadership Creates Decision\n- Decision ID / branches\n- Policy thresholds\n- Trading window] --> B[Open Market Session]
+
+  B --> C[Teams Login\n(team1...team11)]
+  C --> D[Team Places Trade\nBUY branch shares]
+  D --> E[Protocol Executes Trade]
+
+  E --> F[LMSR Update\nC(q)=b*ln(sum(exp(q_i/b)))\nDelta cost = C_after - C_before]
+  F --> G[Spot Probabilities Update\nP_i = exp(q_i/b)/sum(exp(q_j/b))]
+  G --> H[TWAP Integrator\naccumulates P_i over time]
+  H --> I[Dashboard Refresh\nSpot P + TWAP P + EV]
+
+  I --> D
+
+  B --> J{Window Expired?}
+  J -- No --> D
+  J -- Yes --> K[Close Market by TWAP Rule\nWinner = highest TWAP branch\n(spot used only as tie-break)]
+
+  K --> L[Resolution]
+  L --> M[Selected branch settles\nshares paid out normally]
+  L --> N[Non-selected branch reversion\ntrade cashflows reversed]
+
+  M --> O[Leadership Decision Output\nRECOMMEND / ESCALATE / DEFER]
+  N --> O
+
+  O --> P[Audit + Incentives\nPnL, projected balance, trade log]

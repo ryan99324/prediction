@@ -1,0 +1,117 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1220" viewBox="0 0 1800 1220" role="img" aria-labelledby="title desc">
+  <title id="title">Internal Futarchy Market Flow</title>
+  <desc id="desc">Flowchart from leadership setup to team trading, LMSR price update, TWAP close rule, and branch settlement with reversion.</desc>
+
+  <defs>
+    <style>
+      .bg { fill: #0b1324; }
+      .title { fill: #e6edf8; font: 800 40px 'Segoe UI', Arial, sans-serif; }
+      .subtitle { fill: #9fb1d1; font: 500 20px 'Segoe UI', Arial, sans-serif; }
+      .box { fill: #1a2742; stroke: #4f78c9; stroke-width: 2; rx: 16; }
+      .boxAlt { fill: #1b2f3f; stroke: #36b6c8; stroke-width: 2; rx: 16; }
+      .boxWarn { fill: #3a2a3f; stroke: #d475d8; stroke-width: 2; rx: 16; }
+      .diamond { fill: #2d2946; stroke: #b38df5; stroke-width: 2; }
+      .txtH { fill: #f3f7ff; font: 700 22px 'Segoe UI', Arial, sans-serif; }
+      .txt { fill: #c7d6ef; font: 500 17px 'Segoe UI', Arial, sans-serif; }
+      .arrow { stroke: #9fc3ff; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .arrowSoft { stroke: #78d7de; stroke-width: 3; fill: none; marker-end: url(#arrowhead2); }
+      .loop { stroke: #5fa3ff; stroke-width: 2.5; fill: none; stroke-dasharray: 8 8; marker-end: url(#arrowhead); }
+      .label { fill: #9fb1d1; font: 600 15px 'Segoe UI', Arial, sans-serif; }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#9fc3ff" />
+    </marker>
+    <marker id="arrowhead2" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#78d7de" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="1220"/>
+  <text class="title" x="56" y="62">Internal Futarchy Market Flow (Leadership to TWAP Resolution)</text>
+  <text class="subtitle" x="56" y="95">Decision setup -> Team trading -> LMSR pricing -> TWAP close criterion -> Settlement &amp; reversion</text>
+
+  <!-- Row 1 -->
+  <rect class="box" x="70" y="150" width="370" height="150" rx="16"/>
+  <text class="txtH" x="96" y="190">1) Leadership Creates Decision</text>
+  <text class="txt" x="96" y="222">- Branches (PASS/FAIL or multi-branch)</text>
+  <text class="txt" x="96" y="248">- Rule thresholds (EV, probability, downside)</text>
+  <text class="txt" x="96" y="274">- Trading window duration</text>
+
+  <rect class="box" x="500" y="150" width="320" height="150" rx="16"/>
+  <text class="txtH" x="526" y="196">2) Open Market</text>
+  <text class="txt" x="526" y="230">Session starts</text>
+  <text class="txt" x="526" y="256">State persisted in Redis</text>
+
+  <rect class="boxAlt" x="890" y="150" width="320" height="150" rx="16"/>
+  <text class="txtH" x="918" y="196">3) Team Login</text>
+  <text class="txt" x="918" y="230">team1 ... team11</text>
+  <text class="txt" x="918" y="256">Server maps user -> trader_id</text>
+
+  <rect class="boxAlt" x="1280" y="150" width="430" height="150" rx="16"/>
+  <text class="txtH" x="1308" y="196">4) Team Places Trade</text>
+  <text class="txt" x="1308" y="230">BUY branch shares (no shorting)</text>
+  <text class="txt" x="1308" y="256">Admin can trade as any team</text>
+
+  <!-- Row 2 -->
+  <rect class="box" x="70" y="390" width="450" height="180" rx="16"/>
+  <text class="txtH" x="96" y="430">5) LMSR Executes Trade</text>
+  <text class="txt" x="96" y="464">C(q) = b * ln(sum(exp(q_i / b)))</text>
+  <text class="txt" x="96" y="494">gross_cost = C_after - C_before</text>
+  <text class="txt" x="96" y="524">fees applied, balances updated</text>
+
+  <rect class="box" x="590" y="390" width="450" height="180" rx="16"/>
+  <text class="txtH" x="616" y="430">6) Probability Update</text>
+  <text class="txt" x="616" y="464">P_i = exp(q_i/b) / sum(exp(q_j/b))</text>
+  <text class="txt" x="616" y="494">Spot probabilities move continuously</text>
+  <text class="txt" x="616" y="524">Price = implied probability</text>
+
+  <rect class="box" x="1110" y="390" width="600" height="180" rx="16"/>
+  <text class="txtH" x="1136" y="430">7) TWAP Integrator</text>
+  <text class="txt" x="1136" y="464">For each branch i: TWAP_i = (1/T) * integral(P_i(t) dt)</text>
+  <text class="txt" x="1136" y="494">Set Timer can fast-forward TWAP as if time passed</text>
+  <text class="txt" x="1136" y="524">Reduces impact of short-lived spikes</text>
+
+  <!-- Row 3 -->
+  <polygon class="diamond" points="300,700 460,820 300,940 140,820"/>
+  <text class="txtH" x="222" y="815">8) Window</text>
+  <text class="txtH" x="232" y="842">Expired?</text>
+
+  <rect class="boxWarn" x="570" y="740" width="500" height="170" rx="16"/>
+  <text class="txtH" x="596" y="780">9) Close Criterion (Primary = TWAP)</text>
+  <text class="txt" x="596" y="814">Winner = branch with highest TWAP</text>
+  <text class="txt" x="596" y="842">Spot used only as tie-breaker</text>
+  <text class="txt" x="596" y="870">Decision closes automatically or via admin resolve</text>
+
+  <rect class="boxWarn" x="1140" y="730" width="570" height="200" rx="16"/>
+  <text class="txtH" x="1168" y="772">10) Settlement + Reversion</text>
+  <text class="txt" x="1168" y="806">Selected branch settles: payout by shares</text>
+  <text class="txt" x="1168" y="836">Non-selected branch trades are reverted</text>
+  <text class="txt" x="1168" y="866">(cashflows undone per branch)</text>
+  <text class="txt" x="1168" y="896">Outputs feed RECOMMEND / ESCALATE / DEFER</text>
+
+  <!-- Row 4 -->
+  <rect class="boxAlt" x="580" y="1010" width="640" height="145" rx="16"/>
+  <text class="txtH" x="606" y="1050">11) Control Room Output</text>
+  <text class="txt" x="606" y="1084">Leadership sees: TWAP, EV gates, recommendation, balances, trade log</text>
+  <text class="txt" x="606" y="1112">Used as probability-weighted decision support</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M 440 225 L 500 225"/>
+  <path class="arrow" d="M 820 225 L 890 225"/>
+  <path class="arrowSoft" d="M 1210 225 L 1280 225"/>
+
+  <path class="arrow" d="M 1490 300 L 1490 360 L 290 360 L 290 390"/>
+  <path class="arrow" d="M 520 480 L 590 480"/>
+  <path class="arrow" d="M 1040 480 L 1110 480"/>
+
+  <path class="arrow" d="M 1410 570 L 1410 650 L 460 650 L 460 820"/>
+  <path class="arrow" d="M 460 820 L 570 820"/>
+  <path class="arrow" d="M 1070 820 L 1140 820"/>
+  <path class="arrow" d="M 1425 930 L 1220 1010"/>
+
+  <!-- No branch loop -->
+  <path class="loop" d="M 220 760 C 120 700, 80 600, 220 520 C 340 460, 520 460, 590 480"/>
+  <text class="label" x="126" y="666">No -> continue trading</text>
+  <text class="label" x="486" y="780">Yes</text>
+
+</svg>
